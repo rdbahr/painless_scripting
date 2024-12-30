@@ -1,0 +1,66 @@
+# Return true when:
+# - CorrelationId has both incoming and outgoing events
+# - AND
+# - Same IPAddress shows up 10 or more times
+
+# There are some considerations as to why this was done in this way:
+# - ipaddress only exists on the incoming document
+# - incoming and outgoing are done by a filter aggregation. They are not explicitly defined key-value pairs.
+
+# ipmap entry example:
+# 0.0.0.0: { 
+#   total: 2
+#   ticket: 1
+#   parking: 1
+# }
+
+// Only evaluate if there are incoming and outgoing events
+if (ctx.payload.aggregations.total.buckets.incoming.doc_count > 0 && ctx.payload.aggregations.total.buckets.outgoing.doc_count > 0) {
+  Map ipmap = new HashMap();
+  // Iterate of all correlationIds
+  for (int i = 0; i < ctx.payload.aggregations.by_correlationId.buckets.size(); i++) {
+    def incoming = ctx.payload.aggregations.by_correlationId.buckets[i].transactions.buckets.incoming.doc_count;
+    def outgoing = ctx.payload.aggregations.by_correlationId.buckets[i].transactions.buckets.outgoing.doc_count;
+    // Only evaluate if there are incoming and outgoing events for each correlationId
+    if (incoming > 0 && outgoing > 0) {
+      def ipaddress = ctx.payload.aggregations.by_correlationId.buckets[i].transactions.buckets.incoming.incoming.by_ipaddress.buckets[0].key;
+      def ippaychannel = ctx.payload.aggregations.by_correlationId.buckets[i].transactions.buckets.incoming.by_payment_channel.buckets[0].key;
+      if (ipmap.containsKey(ipaddress)) {
+        // if ipaddress and ippaychannel exist, increment by 1
+        if (ipmap.get(ipaddress).containsKey(ippaychannel)) {
+          ipmap.get(ipaddress).put("total", ipmap.get(ipaddress).get("total")+1);
+          ipmap.get(ipaddress).put(ippaychannel, ipmap.get(ipaddress).get(ippaychannel)+1);
+        } else {
+          // add key for ippaychannel to ipaddress and increment total by 1
+          ipmap.get(ipaddress).put("total", ipmap.get(ipaddress).get("total")+1);
+          ipmap.get(ipaddress).put(ippaychannel, 1);
+        }
+      } else {
+        // if ipaddress doesn't exist, add an entry for it, and set the total and ippaychannel to 1
+        ipmap.put(ipaddress, new HashMap());
+        ipmap.get(ipaddress).put("total", 1);
+        ipmap.get(ipaddress).put(ippaychannel, 1);
+      }
+    }
+  }
+  //with a list of frequencies by ipaddress, ippaychannel, and total, create a list of ipaddresses to alert on
+  if (!(ipmap.isEmpty())) {
+    def ipmap_list = '';
+    for (int i = 0; i < ipmap.keySet().size(); i++) {
+      def ipmapkey = ipmap.keySet().toArray()[i];
+      if (ipmap.get(ipmapkey).get("total") > 9) {
+        ipmap_list += ipmapkey + " : " + ipmap.get(ipmapkey) + <br>;
+      }
+    }
+    if (!(ipmap_list.isEmpty())) {
+      ctx.payload.ipmap_list = ipmap_list;
+      return true
+    }
+  }
+  // if there is a high volume of outgoing messages, but no single ipaddress to cause an issue, still send an alert
+  if (ctx.payload.aggregations.total.buckets.outgoing.by_payment_channel.buckets.size() > 0) {
+    return true
+  }
+} else {
+  return false
+}
