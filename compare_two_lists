@@ -1,0 +1,18 @@
+# Aggregate data by timestamp bucket and then by server name
+# Timestamp is split into two buckets for comparison 
+#   last_window: 'now-10m' to 'now-2m'
+#   current_window: 'now-2m' to 'now'
+# Objective, collect list of items from last_window not in current_window
+
+def host_list = "";
+def last_window = ctx.payload.aggregations.last_window.buckets[0].by_agent_name.buckets.stream().map(t -> t.key).collect(Collectors.toList());
+def current_window = ctx.payload.aggregations.current_window.buckets[0].by_agent_name.buckets.stream().map(t -> t.key).collect(Collectors.toList());
+for (def host : last_window) {
+  if (!(current_window.contains(host))) {
+    host_list += host + '<br>';
+  }
+}
+if (host_list.length() > 0) {
+  return true
+}
+return false
