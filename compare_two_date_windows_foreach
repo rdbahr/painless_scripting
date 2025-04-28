@@ -1,0 +1,37 @@
+# Aggregate data by primary key (server name, device, etc)
+# Sub-aggregate by date_window (last window, current window)
+# sub-sub-aggregate by status
+
+# Example:
+#   Devices report status : healthy or unhealthy every minute.
+#   Messages need to trigger on state change:
+#     - healthy -> unhealthy
+#     - unhealthy -> healthy
+
+Map keyStateMap = new HashMap();
+keyStateMap.put('buckets', new ArrayList());
+for (int i=0; i < ctx.payload.aggregations.by_key.buckets.size(); i++) {
+  def iKey = ctx.payload.aggregations.by_key.buckets[i].key;
+  def lastWindow = ctx.payload.aggregations.by_key.buckets[i].date_window.buckets.last_window.by_health.buckets;
+  def currentWindow = ctx.payload.aggregations.by_key.buckets[i].date_window.buckets.current_window.by_health.buckets;
+  Map itemMap = new HashMap();
+  //size=1 means state is same for the entire length of window
+  //size=2 means state changed within the length of window
+  if (currentWindow.size() == 1 && lastWindow.size() == 2) {
+    def message = '';
+    itemMap.put('key', iKey);
+    if (currentWindow[0].key_as_string == 'healthy') {
+      itemMap.put('state', currentWindow[0].key_as_string);
+      itemMap.put('message', 'Some context about health recovery.');
+    } else if (currentWindow[0].key_as_string== 'unhealthy') {
+      itemMap.put('state', currentWindow[0].key_as_string);
+      itemMap.put('message', 'Some context about health alert.');
+    }
+    keyMapState.get('buckets').add(itemMap);
+  }
+}
+ctx.payload.keyMapState = keyMapState;
+if (!(keyMapState.get('buckets').isEmpty())) {
+  return true
+}
+return false
